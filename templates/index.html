@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dual-Speaker Gemini Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Sarabun', sans-serif; font-size: 14px; }
+        /* บังคับขนาดตัวอักษรขั้นต่ำ 14px ทั้งหน้า กันคลาสเล็กกว่านี้หลุดมา */
+        * { font-size: max(14px, 1em); }
+        html { font-size: 14px; }
+        .pulse-ring {
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-slate-800 border-b border-slate-700 p-4 sticky top-0 z-10 shadow-md">
+        <div class="max-w-md mx-auto flex justify-between items-center">
+            <h1 class="text-base font-bold text-blue-400 flex items-center gap-2">
+                <span>👥</span> Dual-Speaker Assistant
+            </h1>
+            <div class="flex items-center gap-2">
+                <span id="costBadge" class="text-sm px-2 py-1 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 font-medium">
+                    ฿0.0000
+                </span>
+                <span id="statusBadge" class="text-sm px-2.5 py-1 rounded-full bg-slate-700 text-slate-400 font-medium">
+                    พร้อมใช้งาน
+                </span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 max-w-md w-full mx-auto p-4 flex flex-col gap-4">
+
+        <!-- Error banner (hidden by default) -->
+        <div id="errorBanner" class="hidden bg-red-900/40 border border-red-500/50 text-red-200 text-sm rounded-lg px-3 py-2">
+        </div>
+
+        <!-- Output Mode Selection -->
+        <section class="bg-slate-800/80 rounded-xl p-3 border border-slate-700">
+            <label class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+                โหมดการตอบกลับ
+            </label>
+            <div class="grid grid-cols-3 gap-2 bg-slate-900 p-1 rounded-lg">
+                <button onclick="setMode('both')" id="mode-both" class="mode-btn py-1.5 text-sm font-medium rounded bg-blue-600 text-white">🔊+📝 ทั้งหมด</button>
+                <button onclick="setMode('text')" id="mode-text" class="mode-btn py-1.5 text-sm font-medium rounded text-slate-400">📝 ข้อความ</button>
+                <button onclick="setMode('speech')" id="mode-speech" class="mode-btn py-1.5 text-sm font-medium rounded text-slate-400">🔊 เสียง</button>
+            </div>
+        </section>
+
+        <!-- Live Dialogue Split Visualizer -->
+        <section class="bg-slate-800/90 rounded-2xl p-4 border border-slate-700 shadow-lg flex flex-col gap-3">
+            <div class="text-sm font-semibold text-slate-400 flex justify-between items-center">
+                <span>💬 การจำแนกบทสนทนา Real-time</span>
+                <button onclick="clearHistory()" class="text-sm text-red-400 hover:underline">ล้างกระดาน</button>
+            </div>
+
+            <div id="dialogueBox" class="space-y-3 max-h-56 overflow-y-auto p-1">
+                <div class="text-sm text-slate-500 text-center py-4">- ยังไม่มีบทสนทนา กดเริ่มฟังด้านล่าง -</div>
+            </div>
+        </section>
+
+        <!-- AI Assistant Answer Box -->
+        <section class="bg-gradient-to-b from-slate-800 to-slate-800/90 rounded-2xl p-4 border border-emerald-500/30 shadow-xl relative min-h-[120px] flex flex-col justify-center items-center">
+            <div class="absolute top-2 left-3 text-sm font-semibold text-emerald-400 flex items-center gap-1">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                คำตอบสำหรับนาย B นำไปพูดต่อ:
+            </div>
+            <div id="aiResponseText" class="text-lg font-semibold text-center text-emerald-300 mt-3">
+                "รอการจำแนกคำถาม..."
+            </div>
+            <div id="echoGuardBadge" class="mt-2 text-sm text-slate-400 bg-slate-900/60 px-2.5 py-0.5 rounded-full">
+                🛡️ ป้องกันเสียงสะท้อน: เปิดใช้งาน
+            </div>
+        </section>
+
+        <!-- Action Control Button -->
+        <section class="mt-auto py-2">
+            <button id="toggleMicBtn" onclick="toggleListening()" class="w-full py-4 rounded-2xl font-bold text-base flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white shadow-lg transition-all">
+                <span>🎙️</span>
+                <span id="micBtnText">เริ่มรับฟังบทสนทนา (2 คน)</span>
+            </button>
+        </section>
+    </main>
+
+    <script>
+        let isListening = false;
+        let isSpeaking = false;
+        let outputMode = 'both';
+        let lastAiReplyText = "";
+        let recognition = null;
+        let dialogueHistory = [];
+
+        // ดึงยอดค่าใช้จ่ายสะสมจากรอบก่อนหน้า (ถ้าเซิร์ฟเวอร์รันมาสักพักแล้ว) มาแสดงตอนเปิดหน้า
+        fetch('/api/usage')
+            .then(res => res.json())
+            .then(data => { if (!data.error) updateCostBadge(data); })
+            .catch(() => {});
+
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'th-TH';
+
+            recognition.onresult = handleSpeechResult;
+            recognition.onerror = (e) => {
+                console.error(e);
+                showError(`ไมโครโฟนมีปัญหา: ${e.error || 'unknown error'}`);
+            };
+            recognition.onend = () => {
+                if (isListening && !isSpeaking) {
+                    try { recognition.start(); } catch(err) {}
+                }
+            };
+        } else {
+            showError('เบราว์เซอร์นี้ไม่รองรับ Web Speech API (ลองใช้ Chrome บนเดสก์ท็อป)');
+        }
+
+        function updateCostBadge(usage) {
+            const badge = document.getElementById('costBadge');
+            const totalThb = usage.total_cost_thb ?? 0;
+            badge.innerText = `฿${totalThb.toFixed(4)}`;
+            badge.title = `รวม ${usage.total_input_tokens ?? 0} input token, ${usage.total_output_tokens ?? 0} output token (~$${(usage.total_cost_usd ?? 0).toFixed(6)})`;
+        }
+
+        function showError(message) {
+            const banner = document.getElementById('errorBanner');
+            banner.textContent = `⚠️ ${message}`;
+            banner.classList.remove('hidden');
+        }
+
+        function hideError() {
+            document.getElementById('errorBanner').classList.add('hidden');
+        }
+
+        function setMode(mode) {
+            outputMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.remove('bg-blue-600', 'text-white');
+                btn.classList.add('text-slate-400');
+            });
+            document.getElementById(`mode-${mode}`).classList.add('bg-blue-600', 'text-white');
+        }
+
+        function toggleListening() {
+            if (!recognition) {
+                showError('ไม่พบ Speech Recognition ในเบราว์เซอร์นี้');
+                return;
+            }
+            const btn = document.getElementById('toggleMicBtn');
+            const btnText = document.getElementById('micBtnText');
+            const badge = document.getElementById('statusBadge');
+
+            if (!isListening) {
+                try {
+                    recognition.start();
+                    isListening = true;
+                    hideError();
+                    btn.className = "w-full py-4 rounded-2xl font-bold text-base flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white shadow-lg pulse-ring";
+                    btnText.innerText = "กำลังรับฟังบทสนทนา...";
+                    badge.className = "text-sm px-2.5 py-1 rounded-full bg-red-500/20 text-red-400 border border-red-500/30";
+                    badge.innerText = "กำลังฟัง";
+                } catch (e) {
+                    showError('ไม่สามารถเริ่มไมโครโฟนได้ ตรวจสอบสิทธิ์การเข้าถึงไมค์');
+                }
+            } else {
+                isListening = false;
+                try { recognition.stop(); } catch(e) {}
+                window.speechSynthesis.cancel();
+                btn.className = "w-full py-4 rounded-2xl font-bold text-base flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white shadow-lg";
+                btnText.innerText = "เริ่มรับฟังบทสนทนา (2 คน)";
+                badge.className = "text-sm px-2.5 py-1 rounded-full bg-slate-700 text-slate-400";
+                badge.innerText = "หยุดทำงาน";
+            }
+        }
+
+        function handleSpeechResult(event) {
+            if (isSpeaking) return;
+
+            let finalTranscript = '';
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    finalTranscript += event.results[i][0].transcript;
+                }
+            }
+
+            if (finalTranscript.trim().length > 0) {
+                const text = finalTranscript.trim();
+                if (isSimilarToLastAiReply(text, lastAiReplyText)) return;
+
+                sendToGeminiForDiarization(text);
+            }
+        }
+
+        function isSimilarToLastAiReply(userText, aiReply) {
+            if (!aiReply) return false;
+            const cleanUser = userText.replace(/[^\w\sก-๙]/g, '').toLowerCase();
+            const cleanAi = aiReply.replace(/[^\w\sก-๙]/g, '').toLowerCase();
+            return cleanAi.includes(cleanUser) || (cleanUser.length > 5 && cleanAi.slice(0, 15).includes(cleanUser.slice(0, 15)));
+        }
+
+        async function sendToGeminiForDiarization(rawTranscript) {
+            try {
+                const response = await fetch('/api/process_dialogue', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        raw_text: rawTranscript,
+                        history: dialogueHistory
+                    })
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    showError(errData.error || `เซิร์ฟเวอร์ตอบกลับผิดพลาด (${response.status})`);
+                    return;
+                }
+
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                hideError();
+
+                if (data.usage) {
+                    updateCostBadge(data.usage);
+                }
+
+                if (data.processed_history) {
+                    dialogueHistory = data.processed_history;
+                    renderDialogueUI(dialogueHistory);
+                }
+
+                if (data.reply_for_b) {
+                    lastAiReplyText = data.reply_for_b;
+                    displayAndSpeak(data.reply_for_b);
+                } else {
+                    // เลขาฟังแล้วแต่ยังไม่เจอคำถามที่ต้องตอบ -> คงคำตอบก่อนหน้าไว้ ไม่ต้องเคลียร์จอ
+                    document.getElementById('echoGuardBadge').innerText = '👂 กำลังฟัง... ยังไม่เจอคำถามที่ต้องตอบ';
+                    setTimeout(() => {
+                        document.getElementById('echoGuardBadge').innerText = '🛡️ ป้องกันเสียงสะท้อน: เปิดใช้งาน';
+                    }, 2000);
+                }
+            } catch (err) {
+                console.error(err);
+                showError('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบว่า Flask กำลังรันอยู่หรือไม่');
+            }
+        }
+
+        function renderDialogueUI(history) {
+            const container = document.getElementById('dialogueBox');
+            container.innerHTML = '';
+
+            history.forEach(item => {
+                const isA = item.speaker === 'A';
+                const div = document.createElement('div');
+                div.className = `flex flex-col ${isA ? 'items-start' : 'items-end'}`;
+                div.innerHTML = `
+                    <div class="text-sm text-slate-400 mb-0.5">${isA ? '👤 นาย A (ผู้ถาม)' : '🗣️ นาย B (คู่สนทนา)'}</div>
+                    <div class="px-3 py-1.5 rounded-xl text-sm max-w-[85%] ${isA ? 'bg-slate-700 text-blue-200 rounded-tl-none' : 'bg-blue-600/80 text-white rounded-tr-none'}">
+                        ${item.text}
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function displayAndSpeak(text) {
+            const container = document.getElementById('aiResponseText');
+            if (outputMode === 'both' || outputMode === 'text') {
+                container.innerText = `"${text}"`;
+                if ('vibrate' in navigator) navigator.vibrate(200);
+            } else {
+                container.innerText = "🔊 [กำลังอ่านเสียงให้ฟัง]";
+            }
+
+            if (outputMode === 'both' || outputMode === 'speech') {
+                speakText(text);
+            }
+        }
+
+        function speakText(text) {
+            if (!('speechSynthesis' in window)) return;
+
+            if (recognition && isListening) {
+                try { recognition.stop(); } catch(e){}
+            }
+
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'th-TH';
+            utterance.rate = 1.0;
+
+            utterance.onstart = () => { isSpeaking = true; };
+            utterance.onend = () => {
+                isSpeaking = false;
+                if (isListening && recognition) {
+                    try { recognition.start(); } catch(e){}
+                }
+            };
+            utterance.onerror = () => {
+                isSpeaking = false;
+                if (isListening && recognition) {
+                    try { recognition.start(); } catch(e){}
+                }
+            };
+
+            window.speechSynthesis.speak(utterance);
+        }
+
+        function clearHistory() {
+            dialogueHistory = [];
+            document.getElementById('dialogueBox').innerHTML = '<div class="text-sm text-slate-500 text-center py-4">- ล้างบทสนทนาเรียบร้อย -</div>';
+            document.getElementById('aiResponseText').innerText = '"รอการจำแนกคำถาม..."';
+            hideError();
+        }
+    </script>
+</body>
+</html>
